@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<style>
+    html, body {
+        margin: 0px;
+        height: 100%;
+    }
+</style>
+<html>
+    <meta charset="UTF-8">
+    <head>
+        <title>Virtual Tour Editor</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-gH2yIJqKdNHPEq0n4Mqa/HGKIhSkIHeL5AyhkYV8i59U5AR6csBvApHHNl/vI1Bx" crossorigin="anonymous">
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-A3rJD856KowSb7dwlZdYEkO39Gagi7vIsF0jrRAoQmDKKtQBHUuLZ9AsSv4jD4Xa" crossorigin="anonymous"></script>
+    </head>
+    <body>
+
+        <div style="display: grid; place-items: center; max-height: 100%; min-height: 100%;">
+            <div style="width: 50%;">
+                <input class="form-control form-control-sm" type="file" id="fileInput">
+            </div>
+            <canvas id="viewer" width="1280" height="720"></canvas>
+            <div class="hstack gap-2">
+                <button id="addBtn" class="btn btn-primary">Add hotspot</button>
+                <button id="export" class="btn btn-secondary">Export</button>
+                <span>
+                    <input type="text" class="form-control" id="prefix" placeholder="Export prefix">
+                </span>
+            </div>
+        </div>
+
+        <div class="modal fade" id="hotspotPrompt" tabindex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="exampleModalLabel">Thông tin hotspot</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="text" class="form-control d-none" id="hotspotIndex">
+                        <div class="mb-3">
+                            <label for="hotspotTheta" class="form-label">Kinh độ hotspot</label>
+                            <input type="text" class="form-control" id="hotspotTheta" disabled>
+                        </div>
+                        <div class="mb-3">
+                            <label for="hotspotPhi" class="form-label">Vĩ độ hotspot</label>
+                            <input type="text" class="form-control" id="hotspotPhi" disabled>
+                        </div>
+                        <div class="mb-3">
+                            <label for="hotspotText" class="form-label">Mô tả hotspot</label>
+                            <input type="text" class="form-control" id="hotspotText">
+                        </div>
+                        <div class="mb-3">
+                            <label for="hotspotRedirect" class="form-label">Liên kết URL hotspot</label>
+                            <input type="text" class="form-control" id="hotspotRedirect">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-primary" id="confirm">Xác nhận</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <script src="./viewer.js"></script>
+        <script>
+
+            const fileInput = document.getElementById("fileInput");
+
+            fileInput.onchange = () => {
+                
+                const reader = new FileReader();
+
+                let objectURL;
+                reader.onload = async (e) => {
+                    
+                    const Module = await wasmViewer();
+                    {
+                        const equirectBuffer = new Uint8Array(e.target.result);
+                        
+                        const srcBuffer = Module._malloc(equirectBuffer.length);
+                        Module.HEAPU8.set(equirectBuffer, srcBuffer);
+                        const jsOut = Module._jsCubeMap(srcBuffer, equirectBuffer.length);
+
+                        const dstSize = Module.HEAPU32[jsOut>>2];
+                        const dstBuffer = Module.HEAPU32[(jsOut>>2)+1];
+
+                        objectURL = URL.createObjectURL(new Blob([Module.HEAPU8.slice(dstBuffer, dstBuffer + dstSize)], { type: "image/jpeg" }));
+                        Module._free(srcBuffer);
+                    }
+
+                    const allHotspots = [];
+                    const startupView = { gamma: 0, theta0: 0, phi0: Math.PI / 2 };
+                    
+                    const viewer = document.getElementById('viewer');
+                    const ctxViewer = viewer.getContext("2d");
+                    
+                    
+                        
+                    let { gamma, theta0, phi0 } = startupView;
+                    const hfov = Math.PI * 100 / 180;
+                    const hotspotRadius = 25;
+                    
+
+                    const viewerData = Module._malloc(4 * viewer.width * viewer.height);
+                    const dstImageData = ctxViewer.getImageData(0, 0, viewer.width, viewer.height);
+                    let hotspots = [];
+
+
+                    function createHotspot(x, y, radius, theta, phi, text, redirect, index) {
+                        const path = new Path2D();
+                        path.arc(x, y, radius, 0, 2 * Math.PI);
+                        return { x, y, path, theta, phi, text, redirect, index };
+                    }
+
+                    const renderFrame = () => {
+
+                        
+                        const aspectRatio = viewer.height / viewer.width;
+                        const f           = Math.tan(hfov / 2);
+
+                        Module._viewerQuery(
+                            viewerData,
+                            viewer.width, viewer.height, 
+                            theta0, phi0, gamma, f
+                        );
+
+
+                        dstImageData.data.set(Module.HEAPU8.subarray(viewerData, viewerData + 4 * viewer.width * viewer.height));
+                        ctxViewer.putImageData(dstImageData, 0, 0);
+
+                        hotspots = [];
+                        
+
+                        allHotspots.forEach(({ theta, phi, text, redirect }, index) => {
+                        
+                            let x = Math.cos(theta - theta0) * Math.sin(phi);
+                            let y = Math.sin(theta - theta0) * Math.sin(phi);
+                            let z = Math.cos(phi);
+
+                            [x, y, z] = [
+                                x * Math.cos(phi0) - z * Math.sin(phi0),
+                                y,
+                                x * Math.sin(phi0) + z * Math.cos(phi0)
+                            ];
+
+                            [x, y, z] = [
+                                x * Math.cos(gamma) + y * Math.sin(gamma),
+                                -x * Math.sin(gamma) + y * Math.cos(gamma),
+                                z 
+                            ];
+                            
+
+                            if (z <= 0) return;
+
+                            const t = 1 / z;
+                            
+                            [x, y] = [
+                                x * t / (f * aspectRatio),
+                                y * t / f
+                            ];
+
+                            const row = Math.floor(viewer.height * (x + 1) / 2);
+                            const col = Math.floor(viewer.width * (y + 1) / 2);
+                            if (row < viewer.height && row >= 0 && 
+                                col < viewer.width && col >= 0) {
+                                hotspots.push(createHotspot(col, row, hotspotRadius, theta, phi, text, redirect, index));
+                            }
+
+                        });
+                        for (const hotspot of hotspots) {
+                            ctxViewer.fillStyle = 'red';
+                            ctxViewer.fill(hotspot.path);
+                        }
+                        
+                    };
+
+                    renderFrame();
+
+
+                            
+                    let isNavigating = false;
+                    let isEditing = false;
+                    let prevPosition = null;
+
+                    document.getElementById("addBtn").onclick = () => isEditing = true;
+
+
+                    const ScreentoSpherical = (i, j) => {
+                        const f = Math.tan(hfov / 2);
+                        let [x, y, z] = [
+                            2 * f * i / viewer.width - f * viewer.height / viewer.width,
+                            2 * f * j / viewer.width - f,
+                            1
+                        ];
+                        [x, y, z] = [
+                            x * Math.cos(gamma) - y * Math.sin(gamma),
+                            x * Math.sin(gamma) + y * Math.cos(gamma),
+                            z
+                        ];
+                        [x, y, z] = [
+                            x * Math.cos(phi0) + z * Math.sin(phi0),
+                            y,
+                            -x * Math.sin(phi0) + z * Math.cos(phi0)
+                        ];
+
+                        [x, y, z] = [
+                            x * Math.cos(theta0) - y * Math.sin(theta0),
+                            x * Math.sin(theta0) + y * Math.cos(theta0),
+                            z
+                        ];
+                        let theta = Math.atan2(y, x);
+                        let phi = Math.acos(z / Math.sqrt(x*x + y*y + z*z));
+                        if (theta < 0) theta += 2 * Math.PI;
+                        return { theta, phi };
+                    }
+                        const indexInput = document.getElementById("hotspotIndex");
+                        const thetaInput = document.getElementById("hotspotTheta");
+                        const phiInput = document.getElementById("hotspotPhi");
+                        const textInput = document.getElementById("hotspotText");
+                        const redirectInput = document.getElementById("hotspotRedirect");
+
+                        const modal = new bootstrap.Modal('#hotspotPrompt');
+
+
+
+                        textInput.value = redirectInput.value = '';
+                        function modifyHotspot(hotspotIndex) {
+                            indexInput.value = hotspotIndex;
+                            thetaInput.value = allHotspots[hotspotIndex].theta;
+                            phiInput.value = allHotspots[hotspotIndex].phi;
+                            textInput.value = allHotspots[hotspotIndex].text;
+                            redirectInput.value = allHotspots[hotspotIndex].redirect;
+                            modal.show();
+                        }
+                    
+                        document.getElementById("confirm").onclick = (ev) => {
+                            ev.preventDefault();
+                            const hotspotIndex = indexInput.value;
+                            allHotspots[hotspotIndex].text = textInput.value;
+                            allHotspots[hotspotIndex].redirect = redirectInput.value;
+                            modal.hide();
+                        }
+
+                    const btnDownHandler = ({offsetX: x, offsetY: y}) => {
+
+                        if (!isEditing) {
+
+                            for (const hotspot of hotspots) {
+                                if (ctxViewer.isPointInPath(hotspot.path, x, y)) {
+                                    modifyHotspot(hotspot.index);
+                                }
+                            }
+                            isNavigating = true;
+                            prevPosition = {x, y};
+                        }
+                        else {
+                            const { theta, phi } = ScreentoSpherical(y, x);
+                            allHotspots.push({
+                                theta,
+                                phi,
+                                text: '',
+                                redirect: '',
+                            });
+
+                            modifyHotspot(allHotspots.length - 1);
+
+                            isEditing = false;
+
+                        }
+                    };
+
+                    const btnUpHandler = () => {
+                        isNavigating = false;
+                        prevPosition = null;
+                    }
+
+                    let shownPopup = false;
+
+                    const btnMoveHandler = ({offsetX: x, offsetY: y}) => {
+                        
+                        if (isNavigating) {
+                            
+                            const dx = x - prevPosition.x;
+                            const dy = y - prevPosition.y;
+                            theta0 += dx * 0.01;
+                            phi0 += dy * 0.01;
+                            if (phi0 < 0) phi0 = 0;
+                            if (phi0 >= Math.PI) phi0 = Math.PI;
+                            theta0 -= 2 * Math.PI * Math.floor(theta0 / (2 * Math.PI));
+                            renderFrame();
+                            prevPosition = {x, y};
+                        }
+                        else {
+                            renderFrame();
+
+                            if (isEditing) {
+                                ctxViewer.beginPath();
+                                ctxViewer.fillStyle = 'red';
+                                ctxViewer.arc(x, y, hotspotRadius, 0, 2 * Math.PI);
+                                ctxViewer.fill();
+                            }
+                            else {
+                                for (const hotspot of hotspots) {
+                                    if (ctxViewer.isPointInPath(hotspot.path, x, y)) {
+                                        
+                                        ctxViewer.font = "20px Verdana";
+                                        
+                                        ctxViewer.fillStyle = 'black';
+                                        ctxViewer.fillRect(hotspot.x - hotspotRadius * 3, hotspot.y - hotspotRadius * 2.5, hotspotRadius * 6, hotspotRadius)
+                                        
+                                        ctxViewer.fillStyle = 'white';
+                                        ctxViewer.textAlign = "center";
+                                        ctxViewer.fillText(hotspot.text, hotspot.x, hotspot.y - hotspotRadius * 1.75, hotspotRadius * 6);
+                                    }
+                                }
+                            }   
+                        }
+
+                    }
+
+                    viewer.onmousedown = btnDownHandler;
+                    viewer.onmousemove = btnMoveHandler;
+                    viewer.onmouseup = btnUpHandler;
+                    viewer.onmouseout = btnUpHandler;
+                    viewer.onwheel = ev => {
+                        ev.preventDefault();
+                        
+                        if (ev.deltaY > 0 && hfov < Math.PI * 150 / 180) gamma += 0.1;
+                        if (ev.deltaY < 0 && hfov > 0.1) gamma -= 0.1;
+
+                        while (gamma < 0) gamma += 2 * Math.PI;
+                        while (gamma >= 2 * Math.PI) gamma -= 2 * Math.PI;
+                        
+                        renderFrame();
+                    }
+
+
+
+                    viewer.ontouchstart = ev => {
+                        ev.preventDefault();
+                        const bbox = viewer.getBoundingClientRect();
+                        btnDownHandler({
+                            offsetX: ev.touches[0].clientX - bbox.x,
+                            offsetY: ev.touches[0].clientY - bbox.y
+                        });
+                    }
+                    viewer.ontouchmove = ev => {
+                        ev.preventDefault();
+                        const bbox = viewer.getBoundingClientRect();
+                        btnMoveHandler({
+                            offsetX: ev.touches[0].clientX - bbox.x,
+                            offsetY: ev.touches[0].clientY - bbox.y
+                        });
+                    };
+                    viewer.ontouchend = btnUpHandler;
+                    viewer.ontouchcancel = btnUpHandler;
+
+
+                    document.getElementById("export").onclick = () => {
+                        var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+                            startupView: { theta0, phi0, gamma },
+                            allHotspots
+                        }));
+                        let prefix = document.getElementById("prefix").value;
+                        if (prefix === '') prefix = 'export';
+                        var downloadAnchorNode = document.createElement('a');
+                        downloadAnchorNode.setAttribute("href",     dataStr);
+                        downloadAnchorNode.setAttribute("download", `${prefix}.json`);
+                        document.body.appendChild(downloadAnchorNode); // required for firefox
+                        downloadAnchorNode.click();
+                        downloadAnchorNode.setAttribute("href",     objectURL);
+                        downloadAnchorNode.setAttribute("download", `${prefix}.jpg`);
+                        downloadAnchorNode.click();
+                        downloadAnchorNode.remove();
+                    }
+
+
+
+                    
+                };
+                reader.readAsArrayBuffer(fileInput.files[0]);
+
+
+            }
+
+        </script>
+    </body>
+</html>
