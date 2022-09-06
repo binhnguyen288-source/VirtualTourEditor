@@ -138,45 +138,80 @@ struct jsOut {
     uchar* data;
 };
 #include <iostream>
-extern "C" jsOut const* jsCubeMap(std::uint8_t* srcBuffer, int size) {
+
+extern "C" jsOut const* jsCubeMap(std::uint8_t* srcBuffer, int size, int downScale) {
 
 
     cv::Mat temp(1, size, CV_8U, srcBuffer);
 
     cv::Mat srcMat = cv::imdecode(temp, cv::IMREAD_COLOR);
 
-    cv::cvtColor(srcMat, srcMat, cv::COLOR_BGR2RGBA);
     
-    const int nCubeSide = srcMat.rows;
+    const int nCubeSide = srcMat.rows / downScale;
 
-    std::uint8_t* dstBuffer = (std::uint8_t*)malloc(4 * nCubeSide * 6 * nCubeSide);
+    std::uint8_t* dstBuffer = (std::uint8_t*)malloc(3 * nCubeSide * 6 * nCubeSide);
     
     RGBA src(srcMat.data, srcMat.cols, srcMat.rows);
     RGBA dst(dstBuffer, nCubeSide, 6 * nCubeSide);
 
-    toCubeMapFace<LEFT>(src, dst);
-    toCubeMapFace<FRONT>(src, dst);
-    toCubeMapFace<RIGHT>(src, dst);
-    toCubeMapFace<BACK>(src, dst);
-    toCubeMapFace<TOP>(src, dst);
-    toCubeMapFace<BOTTOM>(src, dst);
+    toCubeMapFace<LEFT>(src, dst, nCubeSide);
+    toCubeMapFace<FRONT>(src, dst, nCubeSide);
+    toCubeMapFace<RIGHT>(src, dst, nCubeSide);
+    toCubeMapFace<BACK>(src, dst, nCubeSide);
+    toCubeMapFace<TOP>(src, dst, nCubeSide);
+    toCubeMapFace<BOTTOM>(src, dst, nCubeSide);
 
-    currentCubemap = cv::Mat(6 * nCubeSide, nCubeSide, CV_8UC4);
-    std::copy_n(dstBuffer, 4 * nCubeSide * 6 * nCubeSide, currentCubemap.data);
+    currentCubemap = cv::Mat(6 * nCubeSide, nCubeSide, CV_8UC3);
+    std::copy_n(dstBuffer, 3 * nCubeSide * 6 * nCubeSide, currentCubemap.data);
     free(dstBuffer);
-    cv::cvtColor(currentCubemap, currentCubemap, cv::COLOR_RGBA2BGR);
 
     static std::vector<uchar> outBuffer;
     static jsOut out;
+    uint32_t dummy;
 
     outBuffer.clear();
+    std::vector<uchar> left, front, right, back, top, bottom;
+    cv::imencode(".jpg", currentCubemap(cv::Range(0 * nCubeSide, 1 * nCubeSide), cv::Range(0, nCubeSide)), left);
+    cv::imencode(".jpg", currentCubemap(cv::Range(1 * nCubeSide, 2 * nCubeSide), cv::Range(0, nCubeSide)), front);
+    cv::imencode(".jpg", currentCubemap(cv::Range(2 * nCubeSide, 3 * nCubeSide), cv::Range(0, nCubeSide)), right);
+    cv::imencode(".jpg", currentCubemap(cv::Range(3 * nCubeSide, 4 * nCubeSide), cv::Range(0, nCubeSide)), back);
+    cv::imencode(".jpg", currentCubemap(cv::Range(4 * nCubeSide, 5 * nCubeSide), cv::Range(0, nCubeSide)), top);
+    cv::imencode(".jpg", currentCubemap(cv::Range(5 * nCubeSide, 6 * nCubeSide), cv::Range(0, nCubeSide)), bottom);
 
-    cv::imencode(".jpg", currentCubemap, outBuffer);
+    outBuffer.resize(outBuffer.size() + 4);
+    dummy = left.size();
+    std::memcpy(&outBuffer.back() - 3, &dummy, 4);
+    outBuffer.insert(outBuffer.end(), left.begin(), left.end());
+
+    outBuffer.resize(outBuffer.size() + 4);
+    dummy = front.size();
+    std::memcpy(&outBuffer.back() - 3, &dummy, 4);
+    outBuffer.insert(outBuffer.end(), front.begin(), front.end());
+
+    outBuffer.resize(outBuffer.size() + 4);
+    dummy = right.size();
+    std::memcpy(&outBuffer.back() - 3, &dummy, 4);
+    outBuffer.insert(outBuffer.end(), right.begin(), right.end());
+
+    outBuffer.resize(outBuffer.size() + 4);
+    dummy = back.size();
+    std::memcpy(&outBuffer.back() - 3, &dummy, 4);
+    outBuffer.insert(outBuffer.end(), back.begin(), back.end());
+
+    outBuffer.resize(outBuffer.size() + 4);
+    dummy = top.size();
+    std::memcpy(&outBuffer.back() - 3, &dummy, 4);
+    outBuffer.insert(outBuffer.end(), top.begin(), top.end());
+
+    outBuffer.resize(outBuffer.size() + 4);
+    dummy = bottom.size();
+    std::memcpy(&outBuffer.back() - 3, &dummy, 4);
+    outBuffer.insert(outBuffer.end(), bottom.begin(), bottom.end());
 
     out.size = outBuffer.size();
     out.data = outBuffer.data();
 
     cv::cvtColor(currentCubemap, currentCubemap, cv::COLOR_BGR2RGB);
-
+    
     return &out;
 }

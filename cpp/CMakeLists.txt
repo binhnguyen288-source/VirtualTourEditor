@@ -11,6 +11,7 @@ add_compile_options(-O3 -ffast-math)
 add_link_options(
     -O3 -ffast-math
     -sEXPORTED_FUNCTIONS=_malloc,_free,_viewerQuery,_jsCubeMap
+    -sEXPORTED_RUNTIME_METHODS=ccall
     -sALLOW_MEMORY_GROWTH
     -sMODULARIZE
     -sEXPORT_NAME=wasmViewer

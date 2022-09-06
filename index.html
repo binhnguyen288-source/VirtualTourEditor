@@ -65,12 +65,13 @@
         <script>
 
             const fileInput = document.getElementById("fileInput");
+            let imageBinaryOriginal = null;
+            let imageBinaryPreview = null;
 
             fileInput.onchange = () => {
                 
                 const reader = new FileReader();
 
-                let objectURL;
                 reader.onload = async (e) => {
                     
                     const Module = await wasmViewer();
@@ -78,13 +79,24 @@
                         const equirectBuffer = new Uint8Array(e.target.result);
                         
                         const srcBuffer = Module._malloc(equirectBuffer.length);
+                        
                         Module.HEAPU8.set(equirectBuffer, srcBuffer);
-                        const jsOut = Module._jsCubeMap(srcBuffer, equirectBuffer.length);
+                        {
+                            const jsOut = Module._jsCubeMap(srcBuffer, equirectBuffer.length, 4);
 
-                        const dstSize = Module.HEAPU32[jsOut>>2];
-                        const dstBuffer = Module.HEAPU32[(jsOut>>2)+1];
+                            const dstSize = Module.HEAPU32[jsOut>>2];
+                            const dstBuffer = Module.HEAPU32[(jsOut>>2)+1];
 
-                        objectURL = URL.createObjectURL(new Blob([Module.HEAPU8.slice(dstBuffer, dstBuffer + dstSize)], { type: "image/jpeg" }));
+                            imageBinaryPreview = Module.HEAPU8.slice(dstBuffer, dstBuffer + dstSize);
+                        }
+                        {
+                            const jsOut = Module._jsCubeMap(srcBuffer, equirectBuffer.length, 1);
+
+                            const dstSize = Module.HEAPU32[jsOut>>2];
+                            const dstBuffer = Module.HEAPU32[(jsOut>>2)+1];
+
+                            imageBinaryOriginal = Module.HEAPU8.slice(dstBuffer, dstBuffer + dstSize);
+                        }
                         Module._free(srcBuffer);
                     }
 
@@ -357,20 +369,25 @@
 
 
                     document.getElementById("export").onclick = () => {
-                        var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+                        const configJSON = JSON.stringify({
                             startupView: { theta0, phi0, gamma },
                             allHotspots
-                        }));
+                        });
                         let prefix = document.getElementById("prefix").value;
                         if (prefix === '') prefix = 'export';
                         var downloadAnchorNode = document.createElement('a');
-                        downloadAnchorNode.setAttribute("href",     dataStr);
-                        downloadAnchorNode.setAttribute("download", `${prefix}.json`);
-                        document.body.appendChild(downloadAnchorNode); // required for firefox
+
+                        let objectURL = URL.createObjectURL(new Blob([imageBinaryOriginal, configJSON]));
+                        downloadAnchorNode.setAttribute("href", objectURL);
+                        downloadAnchorNode.setAttribute("download", `${prefix}.bin`);
+                        document.body.appendChild(downloadAnchorNode);
                         downloadAnchorNode.click();
-                        downloadAnchorNode.setAttribute("href",     objectURL);
-                        downloadAnchorNode.setAttribute("download", `${prefix}.jpg`);
+                        URL.revokeObjectURL(objectURL);
+                        objectURL = URL.createObjectURL(new Blob([imageBinaryPreview, configJSON]));
+                        downloadAnchorNode.setAttribute("href", objectURL);
+                        downloadAnchorNode.setAttribute("download", `${prefix}.pre`);
                         downloadAnchorNode.click();
+                        URL.revokeObjectURL(objectURL);
                         downloadAnchorNode.remove();
                     }
 

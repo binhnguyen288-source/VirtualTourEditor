@@ -18,11 +18,11 @@ struct RGBA {
     std::uint8_t const* getCPixelWrap(int row, int col) const {
         row  = std::clamp(row, 0, height - 1);
         col %= width;
-        return &data[4 * (row * width + col)];
+        return &data[3 * (row * width + col)];
     }
     
     std::uint8_t* getPixel(int row, int col) {
-        return &data[4 * (row * width + col)];
+        return &data[3 * (row * width + col)];
     }
 };
 
@@ -59,8 +59,7 @@ inline Vec3D mapsToSpherical(float a, float b) {
 }
 
 template<Face face>
-void toCubeMapFace(RGBA const& src, RGBA& dst) {
-    const int nCubeSide = src.width / 2;
+void toCubeMapFace(RGBA const& src, RGBA& dst, int nCubeSide) {
     const int offsetJ = face * nCubeSide;
     for (int j = 0; j < nCubeSide; ++j) {
         for (int i = 0; i < nCubeSide; ++i) {
@@ -91,7 +90,6 @@ void toCubeMapFace(RGBA const& src, RGBA& dst) {
             outPix[0] = A[0] * (1 - mu) * (1 - nu) + B[0] * mu * (1 - nu) + C[0] * (1 - mu) * nu + D[0] * mu * nu;
             outPix[1] = A[1] * (1 - mu) * (1 - nu) + B[1] * mu * (1 - nu) + C[1] * (1 - mu) * nu + D[1] * mu * nu;
             outPix[2] = A[2] * (1 - mu) * (1 - nu) + B[2] * mu * (1 - nu) + C[2] * (1 - mu) * nu + D[2] * mu * nu;
-            outPix[3] = 255;
         }
     }
 
